@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>號誌調度員</title>
+<style>
+:root{--bg:#f4f1ea;--fg:#222;--rail:#6b6b6b;--panel:#fff;--mut:#777;--st:#e6e1d4;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1b1d21;--fg:#eee;--rail:#9aa3a8;--panel:#272a30;--mut:#9a9a9a;--st:#2a2e35;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#1b1d21;--fg:#eee;--rail:#9aa3a8;--panel:#272a30;--mut:#9a9a9a;--st:#2a2e35;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Noto Sans TC","PingFang TC",sans-serif;padding:12px}
+.wrap{max-width:980px;margin:0 auto}
+h1{font-size:20px;margin:4px 0 8px}
+.bar{display:flex;gap:16px;flex-wrap:wrap;font-size:15px;margin-bottom:8px}
+.bar b{font-variant-numeric:tabular-nums}
+.box{position:relative;background:var(--panel);border-radius:12px;overflow:hidden}
+canvas{display:block;width:100%;height:auto;touch-action:manipulation}
+#ov{position:absolute;inset:0;background:rgba(0,0,0,.55);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:#fff;text-align:center;padding:16px}
+#ov h2{margin:0;font-size:24px}#ov p{margin:0;max-width:520px;line-height:1.6;font-size:14px}
+button{font:inherit;padding:10px 28px;border:0;border-radius:8px;background:#2f9e5b;color:#fff;cursor:pointer;font-size:16px}
+.help{font-size:13px;color:var(--mut);line-height:1.7;margin-top:10px}
+</style></head><body><div class="wrap">
+<h1>🚦 號誌調度員</h1>
+<div class="bar"><span>通過列車 <b id="sc">0</b></span><span>時間 <b id="tm">0</b>s</span><span>最高 <b id="hi">0</b></span></div>
+<div class="box"><canvas id="cv" width="960" height="400"></canvas>
+<div id="ov"><h2>號誌調度員</h2><p>列車只會從左右兩端駛入這條單線鐵路，沿途甲站、乙站（各 2 股）都要停靠，再駛出另一端。點擊號誌放行；任何一列車停車超過 30 秒即失敗。</p><button id="go">開始遊戲</button></div></div>
+<div class="help">規則：① 點擊停在股道上的列車旁號誌（紅→綠）即發車。② 區間圓點綠色＝空閒，紅色＝有車；放行進入有車的區間會對撞。③ 站內無空股道時，列車停在站外等候並佔用區間，同樣計時。④ 藍色列車由左往右，橘色列車由右往左，駛出地圖即得 1 分。</div>
+</div>
+<script>
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d'),W=960,H=400;
+const ST=[{n:'甲站',x0:150,x1:370,ys:[170,230]},{n:'乙站',x0:590,x1:810,ys:[170,230]}];
+const COL={1:'#3e9bf0','-1':'#f08a24'},LIM=30,SPD=32;
+ST.forEach(s=>s.cx=(s.x0+s.x1)/2);
+let state='ready',T=[],score=0,clock=0,nextSp=[0,0],last=0,best=0;
+try{best=+localStorage.getItem('sigbest2')||0}catch(e){}
+const $=id=>document.getElementById(id);$('hi').textContent=best;
+const secOf=t=>t.st==='go'?(t.dir>0?t.cur:t.cur-1):(t.dir>0?t.cur-1:t.cur);
+const busy=s=>T.some(t=>(t.st==='go'||t.st==='wait')&&secOf(t)===s);
+const ends=s=>s<0?[0,ST[0].x0]:s>0?[ST[1].x1,W]:[ST[0].x1,ST[1].x0];
+const freeTrack=c=>{for(let i=0;i<ST[c].ys.length;i++)if(!T.some(t=>t.st==='stop'&&t.cur===c&&t.track===i))return i;return -1};
+function spawn(side){
+  const dir=side===0?1:-1,cur=dir>0?-1:2;
+  if(busy(dir>0?-1:1)){nextSp[side]=1.5;return}
+  T.push({st:'go',cur,dir,track:-1,t:0,p:0,green:false,dep:0});
+}
+function start(){T=[];score=0;clock=0;state='play';nextSp=[4,9];$('ov').style.display='none';last=performance.now();requestAnimationFrame(loop)}
+function over(m){state='over';if(score>best){best=score;try{localStorage.setItem('sigbest2',best)}catch(e){}}
+  $('hi').textContent=best;$('ov').innerHTML='<h2>❌ 失敗</h2><p>'+m+'<br>通過列車：'+score+'　存活：'+(clock|0)+' 秒</p><button id="go">再玩一次</button>';
+  $('ov').style.display='flex';$('go').onclick=start}
+function update(dt){
+  clock+=dt;for(let s=0;s<2;s++){nextSp[s]-=dt;if(nextSp[s]<=0){spawn(s);if(nextSp[s]<=0)nextSp[s]=Math.max(8,18-clock/25)+Math.random()*4}}
+  
+  for(const t of T.slice()){
+    if(t.st==='go'){const[a,b]=ends(secOf(t));t.p+=dt*SPD/(b-a);
+      if(t.p>=1){t.cur+=t.dir;if(t.cur<0||t.cur>1){T.splice(T.indexOf(t),1);score++;continue}t.st='wait';t.t=0}}
+    if(t.st==='wait'){const f=freeTrack(t.cur);if(f>=0){t.st='stop';t.track=f;t.dep=0}}
+    if(t.st==='stop'&&t.green){t.dep+=dt;if(t.dep>0.7){
+      if(busy(t.dir>0?t.cur:t.cur-1)){over('列車在'+ST[t.cur].n+'發車進入了已有列車的區間，發生對撞！');return}
+      t.st='go';t.p=0;t.track=-1;t.green=false;t.t=0;continue}}
+    if(t.st==='stop'||t.st==='wait'){t.t+=dt;if(t.t>=LIM){over('一列列車在'+ST[t.cur].n+(t.st==='wait'?'站外':'')+'停車超過 30 秒！');return}}
+  }
+  $('sc').textContent=score;$('tm').textContent=clock|0;
+}
+function pos(t){
+  if(t.st==='stop')return[ST[t.cur].cx,ST[t.cur].ys[t.track]];
+  if(t.st==='wait')return[t.dir>0?ST[t.cur].x0-34:ST[t.cur].x1+34,200];
+  const[a,b]=ends(secOf(t));return[t.dir>0?a+(b-a)*t.p:b-(b-a)*t.p,200];
+}
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function draw(){
+  const fg=css('--fg'),rail=css('--rail'),stc=css('--st'),mut=css('--mut');
+  ctx.clearRect(0,0,W,H);ctx.lineCap='round';ctx.textAlign='center';
+  ST.forEach(s=>{
+    const top=s.ys[0]-34,h=s.ys[s.ys.length-1]-s.ys[0]+68;
+    ctx.fillStyle=stc;ctx.fillRect(s.x0,top,s.x1-s.x0,h);
+    ctx.fillStyle=fg;ctx.font='bold 16px sans-serif';ctx.fillText(s.n+'（'+s.ys.length+'股）',s.cx,top-10);
+    ctx.strokeStyle=rail;ctx.lineWidth=4;
+    s.ys.forEach(y=>{ctx.beginPath();ctx.moveTo(s.x0+28,y);ctx.lineTo(s.x1-28,y);ctx.moveTo(s.x0,200);ctx.lineTo(s.x0+28,y);ctx.moveTo(s.x1,200);ctx.lineTo(s.x1-28,y);ctx.stroke()});
+  });
+  ctx.strokeStyle=rail;ctx.lineWidth=4;
+  for(let i=-1;i<=1;i++){const[a,b]=ends(i);ctx.beginPath();ctx.moveTo(a,200);ctx.lineTo(b,200);ctx.stroke();
+    const m=(a+b)/2;ctx.fillStyle=busy(i)?'#e5484d':'#2f9e5b';ctx.beginPath();ctx.arc(m,178,7,0,7);ctx.fill();
+    ctx.fillStyle=mut;ctx.font='11px sans-serif';ctx.fillText(busy(i)?'有車':'空閒',m,162)}
+  ctx.fillStyle=mut;ctx.font='12px sans-serif';ctx.fillText('◀ 來車',40,225);ctx.fillText('來車 ▶',W-40,225);
+  if(state==='play')for(let s=0;s<2;s++){if(nextSp[s]>5)continue;const x=s?W-75:75;
+    ctx.fillStyle=nextSp[s]<=2?'#e5484d':'#f5a524';ctx.font='bold 30px sans-serif';ctx.fillText(Math.ceil(nextSp[s]),x,272);
+    ctx.fillStyle=mut;ctx.font='12px sans-serif';ctx.fillText('新列車即將駛入',x,292)}
+  for(const t of T){
+    const[x,y]=pos(t);
+    if(t.st==='stop'){const sx=ST[t.cur].cx+50;
+      ctx.fillStyle='#222';ctx.beginPath();ctx.arc(sx,y,13,0,7);ctx.fill();
+      ctx.fillStyle=t.green?'#2fd070':'#f0383f';ctx.beginPath();ctx.arc(sx,y,9,0,7);ctx.fill();}
+    ctx.fillStyle=COL[t.dir];ctx.beginPath();ctx.roundRect(x-28,y-10,56,20,6);ctx.fill();
+    ctx.fillStyle='#fff';ctx.font='bold 14px sans-serif';ctx.fillText(t.dir>0?'▶▶':'◀◀',x,y+5);
+    if(t.st==='stop'||t.st==='wait'){
+      const f=Math.min(1,t.t/LIM);ctx.fillStyle='rgba(128,128,128,.4)';ctx.fillRect(x-28,y-20,56,5);
+      ctx.fillStyle=f<.5?'#2f9e5b':f<.8?'#f5a524':'#e5484d';ctx.fillRect(x-28,y-20,56*(1-f),5);
+      if(f>.5){ctx.fillStyle=fg;ctx.font='bold 11px sans-serif';ctx.fillText(Math.ceil(LIM-t.t)+'s',x,y-24)}}
+  }
+}
+function loop(n){const dt=Math.min(.05,(n-last)/1000);last=n;if(state==='play')update(dt);draw();if(state==='play')requestAnimationFrame(loop)}
+cv.addEventListener('pointerdown',e=>{
+  if(state!=='play')return;const r=cv.getBoundingClientRect(),mx=(e.clientX-r.left)*W/r.width,my=(e.clientY-r.top)*H/r.height;
+  for(const t of T)if(t.st==='stop'){
+    const sx=ST[t.cur].cx+50,sy=ST[t.cur].ys[t.track];
+    if(Math.hypot(mx-sx,my-sy)<22){t.green=!t.green;t.dep=0;break}}
+});
+$('go').onclick=start;draw();
+</script></body></html>
