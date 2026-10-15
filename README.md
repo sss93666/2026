@@ -1,2 +1,1 @@
-# Interactive Webpage
-# 2026
+Interactive Webpage
